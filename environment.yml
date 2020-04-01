@@ -13,6 +13,7 @@ dependencies:
   - opencv=4.1
   - cudnn=7.6.0=cuda10.0_0
   - scikit-image
+  - pil
   - pycocotools
 #  - pip:
 #      - skimage

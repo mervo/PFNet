@@ -75,7 +75,7 @@ class CocoConfig(Config):
     IMAGES_PER_GPU = 25
 
     # Uncomment to train on 8 GPUs (default is 1)
-    GPU_COUNT = 2
+    GPU_COUNT = 1
 
 
 ############################################################
@@ -165,7 +165,9 @@ def data_generator_evaluation(dataset, config, shuffle=True, augment=True, rando
                 min_dim=config.IMAGE_MIN_DIM,
                 max_dim=config.IMAGE_MAX_DIM,
                 padding=config.IMAGE_PADDING)
-
+            # import cv2
+            # cv2.imshow('input image', image)
+            # cv2.waitKey(1)
             (height, width) = image.shape
 
             marginal = config.MARGINAL_PIXEL
@@ -191,8 +193,12 @@ def data_generator_evaluation(dataset, config, shuffle=True, augment=True, rando
 
             # Two branches. The CNN try to learn the H and inv(H) at the same time. So in the first branch, we just compute the
             #  homography H from the original image to a perturbed image. In the second branch, we just compute the inv(H)
+            import cv2
             H = cv2.getPerspectiveTransform(np.float32(four_points), np.float32(perturbed_four_points))
             warped_image = cv2.warpPerspective(image, np.linalg.inv(H), (image.shape[1], image.shape[0]))
+            # import cv2
+            # cv2.imshow('warped_image', warped_image)
+            # cv2.waitKey(10)
 
             img_patch_ori = image[top_left_point[1]:bottom_right_point[1], top_left_point[0]:bottom_right_point[0]]
             img_patch_pert = warped_image[top_left_point[1]:bottom_right_point[1],
@@ -218,12 +224,14 @@ def data_generator_evaluation(dataset, config, shuffle=True, augment=True, rando
             pf_patch[:, :, 1] = pf_patch_y_branch1
 
 
+            # import cv2
+            # cv2.imshow('test', img_patch_ori)
+            # cv2.waitKey(10)
             img_patch_ori = mold_image(img_patch_ori, config)
             img_patch_pert = mold_image(img_patch_pert, config)
             image_patch_pair = np.zeros((patch_size, patch_size, 2))
             image_patch_pair[:, :, 0] = img_patch_ori
             image_patch_pair[:, :, 1] = img_patch_pert
-
 
             base_four_points = np.asarray([x, y,
                                            x, patch_size + y,
@@ -270,6 +278,162 @@ def data_generator_evaluation(dataset, config, shuffle=True, augment=True, rando
             error_count += 1
             if error_count > 5:
                 raise
+
+def gen_X_from_image(image, config, batch_size=1):
+    import cv2
+    b = 0  # batch item index
+    image_index = -1
+    error_count = 0
+    # TODO
+    while True:
+        try:
+            image = cv2.imread(image,cv2.IMREAD_GRAYSCALE)
+            image = utils.resize_image(
+                image,
+                min_dim=config.IMAGE_MIN_DIM,
+                max_dim=config.IMAGE_MAX_DIM,
+                padding=config.IMAGE_PADDING)
+
+            cv2.imshow('source-image', image)
+            cv2.waitKey(0)
+            (height, width) = image.shape
+
+            marginal = config.MARGINAL_PIXEL
+            patch_size = config.PATCH_SIZE
+
+            # create random point P within appropriate bounds
+            y = random.randint(marginal, height - marginal - patch_size)
+            x = random.randint(marginal, width - marginal - patch_size)
+            # define corners of image patch
+            top_left_point = (x, y)
+            bottom_left_point = (x, patch_size + y)
+            bottom_right_point = (patch_size + x, patch_size + y)
+            top_right_point = (x + patch_size, y)
+
+            four_points = [top_left_point, bottom_left_point, bottom_right_point, top_right_point]
+            perturbed_four_points = []
+            for point in four_points:
+                perturbed_four_points.append((point[0] + random.randint(-marginal, marginal),
+                                              point[1] + random.randint(-marginal, marginal)))
+
+            y_grid, x_grid = np.mgrid[0:image.shape[0], 0:image.shape[1]]
+            point = np.vstack((x_grid.flatten(), y_grid.flatten())).transpose()
+
+            # Two branches. The CNN try to learn the H and inv(H) at the same time. So in the first branch, we just compute the
+            #  homography H from the original image to a perturbed image. In the second branch, we just compute the inv(H)
+            import cv2
+            H = cv2.getPerspectiveTransform(np.float32(four_points), np.float32(perturbed_four_points))
+            warped_image = cv2.warpPerspective(image, np.linalg.inv(H), (image.shape[1], image.shape[0]))
+            import cv2
+            cv2.imshow('test', warped_image)
+            cv2.waitKey(0)
+
+            img_patch_ori = image[top_left_point[1]:bottom_right_point[1], top_left_point[0]:bottom_right_point[0]]
+            img_patch_pert = warped_image[top_left_point[1]:bottom_right_point[1],
+                                          top_left_point[0]:bottom_right_point[0]]
+
+            point_transformed_branch1 = cv2.perspectiveTransform(np.array([point], dtype=np.float32), H).squeeze()
+            diff_branch1 = point_transformed_branch1 - point
+            diff_x_branch1 = diff_branch1[:, 0]
+            diff_y_branch1 = diff_branch1[:, 1]
+
+            diff_x_branch1 = diff_x_branch1.reshape((image.shape[0], image.shape[1]))
+            diff_y_branch1 = diff_y_branch1.reshape((image.shape[0], image.shape[1]))
+
+            pf_patch_x_branch1 = diff_x_branch1[top_left_point[1]:bottom_right_point[1],
+                                 top_left_point[0]:bottom_right_point[0]]
+
+            pf_patch_y_branch1 = diff_y_branch1[top_left_point[1]:bottom_right_point[1],
+                                 top_left_point[0]:bottom_right_point[0]]
+
+
+            pf_patch = np.zeros((config.PATCH_SIZE, config.PATCH_SIZE, 2))
+            pf_patch[:, :, 0] = pf_patch_x_branch1
+            pf_patch[:, :, 1] = pf_patch_y_branch1
+
+            img_patch_ori = mold_image(img_patch_ori, config)
+            img_patch_pert = mold_image(img_patch_pert, config)
+            image_patch_pair = np.zeros((patch_size, patch_size, 2))
+            image_patch_pair[:, :, 0] = img_patch_ori
+            image_patch_pair[:, :, 1] = img_patch_pert
+
+            base_four_points = np.asarray([x, y,
+                                           x, patch_size + y,
+                                           patch_size + x, patch_size + y,
+                                           x + patch_size, y])
+
+            perturbed_four_points = np.asarray(perturbed_four_points)
+            perturbed_base_four_points = np.asarray([perturbed_four_points[0, 0], perturbed_four_points[0, 1],
+                                                     perturbed_four_points[1, 0], perturbed_four_points[1, 1],
+                                                     perturbed_four_points[2, 0], perturbed_four_points[2, 1],
+                                                     perturbed_four_points[3, 0], perturbed_four_points[3, 1]])
+            # Init batch arrays
+            if b == 0:
+                batch_image_patch_pair = np.zeros((batch_size,) + (config.PATCH_SIZE, config.PATCH_SIZE, 2),
+                                                 dtype=np.float32)
+                batch_pf_patch = np.zeros((batch_size,) + (config.PATCH_SIZE, config.PATCH_SIZE, 2),
+                                          dtype=np.float32)
+                batch_base_four_points = np.zeros((batch_size, 8), dtype=np.float32)
+
+                batch_perturbed_base_four_points = np.zeros((batch_size, 8), dtype=np.float32)
+
+            # Add to batch
+            batch_image_patch_pair[b, :, :, :] = image_patch_pair
+            batch_pf_patch[b, :, :, :] = pf_patch
+            batch_base_four_points[b, :] = base_four_points
+            batch_perturbed_base_four_points[b, :] = perturbed_base_four_points
+            b += 1
+
+            # Batch full?
+            if b >= batch_size:
+                inputs = [batch_image_patch_pair]
+                outputs = [batch_pf_patch]
+
+                yield inputs, outputs, batch_base_four_points, batch_perturbed_base_four_points
+
+                # start a new batch
+                b = 0
+        except (GeneratorExit, KeyboardInterrupt):
+            raise
+
+def gen_H_from_Y(Y_true, Y_pred, PATCH_SIZE):
+    # TODO
+    # Compute the True H using Y_true
+    assert (Y_true.shape == Y_pred.shape), "the shape of gt and pred should be the same"
+    batch_size = Y_true.shape[0]
+
+    for i in range(batch_size):
+        Y_true_in_loop = Y_true[i, :, :, :]
+        Y_pred_in_loop = Y_pred[i, :, :, :]
+
+        predicted_pf_x1 = Y_pred_in_loop[:, :, 0]
+        predicted_pf_y1 = Y_pred_in_loop[:, :, 1]
+
+        pf_x1_img_coord = predicted_pf_x1
+        pf_y1_img_coord = predicted_pf_y1
+
+        y_patch_grid, x_patch_grid = np.mgrid[0:config.PATCH_SIZE, 0:config.PATCH_SIZE]
+
+        patch_coord_x = x_patch_grid
+        patch_coord_y = y_patch_grid
+
+        points_branch1 = np.vstack((patch_coord_x.flatten(), patch_coord_y.flatten())).transpose()
+        mapped_points_branch1 = points_branch1 + np.vstack(
+            (pf_x1_img_coord.flatten(), pf_y1_img_coord.flatten())).transpose()
+
+        original_points = np.vstack((points_branch1))
+        mapped_points = np.vstack((mapped_points_branch1))
+
+        H_predicted = cv2.findHomography(np.float32(original_points), np.float32(mapped_points), cv2.RANSAC, 10)[0]
+
+        predicted_delta_four_point = cv2.perspectiveTransform(np.asarray([four_points], dtype=np.float32),
+                                                              H_predicted).squeeze() - np.asarray(perturbed_four_points)
+
+        result = np.mean(np.linalg.norm(predicted_delta_four_point, axis=1))
+        mace_b.append(result)
+
+    __mace = np.mean(mace_b)
+    return __mace
 
 def evaluate_PFNet(model, val_generator, limit=0, batch_size=0):
     """Runs official COCO evaluation.
@@ -319,12 +483,14 @@ def evaluate_PFNet(model, val_generator, limit=0, batch_size=0):
 
 def metric_paf(Y_true, Y_pred, PATCH_SIZE, base_four_points, perturbed_base_four_points):
     # Compute the True H using Y_true
+    print(f'Y_true.shape: {Y_true.shape}')
+    print(f'Y_pred.shape: {Y_pred.shape}')
     assert (Y_true.shape == Y_pred.shape), "the shape of gt and pred should be the same"
     batch_size = Y_true.shape[0]
 
 
     mace_b = []
-    
+
     for i in range(batch_size):
         Y_true_in_loop = Y_true[i, :, :, :]
         Y_pred_in_loop = Y_pred[i, :, :, :]
@@ -367,6 +533,7 @@ def metric_paf(Y_true, Y_pred, PATCH_SIZE, base_four_points, perturbed_base_four
         mapped_points = np.vstack((mapped_points_branch1))
 
         H_predicted = cv2.findHomography(np.float32(original_points), np.float32(mapped_points), cv2.RANSAC, 10)[0]
+        print(f'H_predicted: {H_predicted}')
 
         predicted_delta_four_point = cv2.perspectiveTransform(np.asarray([four_points], dtype=np.float32),
                                                                   H_predicted).squeeze() - np.asarray(perturbed_four_points)
@@ -398,7 +565,7 @@ if __name__ == '__main__':
                         metavar="/path/to/logs/",
                         help='Logs and checkpoints directory (default=logs/)')
     parser.add_argument('--limit', required=False,
-                        default=5000,
+                        default=50,
                         metavar="<image count>",
                         help='Images to use for evaluation (default=5000), as mentioned in the paper')
     parser.add_argument('--download', required=False,
@@ -425,6 +592,18 @@ if __name__ == '__main__':
     config = InferenceConfig()
     config.display()
 
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
+
     # Create model
     model = modellib.DensePerspective(mode="inference", config=config, model_dir=args.logs)
 
@@ -439,9 +618,8 @@ if __name__ == '__main__':
     coco = dataset_val.load_coco(args.dataset, "val", year=args.year, return_coco=True,
                                  auto_download=args.download)
     dataset_val.prepare()
-    val_generator = data_generator_evaluation(dataset_val, config, shuffle=True,
-                                              batch_size=config.BATCH_SIZE,
-                                              augment=False)
+    # val_generator = data_generator_evaluation(dataset_val, config, shuffle=True,batch_size=config.BATCH_SIZE, augment=False)
+    val_generator = gen_X_from_image('/data/projects/pixelplus/PFNet/input/box_front.png', config)
     print("Running COCO evaluation on {} images regarding PFNet performance.".format(args.limit))
     evaluate_PFNet(model, val_generator, limit=int(args.limit), batch_size=config.BATCH_SIZE)
 

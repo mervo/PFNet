@@ -26,6 +26,7 @@ import tensorflow as tf
 import scipy.misc
 import skimage.color
 import skimage.io
+import skimage.transform
 import urllib.request
 import shutil
 import cv2
@@ -205,6 +206,6 @@ def resize_image(image, min_dim=None, max_dim=None, padding=False):
     scale: The scale factor used to resize the image
     padding: Padding added to the image [(top, bottom), (left, right), (0, 0)]
     """
-    image = scipy.misc.imresize(image, (240, 320))
+    image = skimage.transform.resize(image, (240, 320))
     return image
 
